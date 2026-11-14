@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Raven Pet
+.venv/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
