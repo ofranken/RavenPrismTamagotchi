@@ -6,6 +6,10 @@ A fat, pixel-art raven (modelled on the Raven plush) lives in the corner of your
 glasses and reacts to how you use your **phone**. Doomscroll and it gets hurt. Answer email, go
 for a walk or put the phone down and it thrives. Look at it and it showers you with hearts.
 
+**🎬 Demo video: https://youtu.be/6lmOFtocQfU**
+
+[![Raven Pet demo video](https://img.youtube.com/vi/6lmOFtocQfU/hqdefault.jpg)](https://youtu.be/6lmOFtocQfU)
+
 > **Status:** a ~30-minute hackathon prototype. It works end to end on a real Pixel 9 and the
 > Raven simulator, and we'd love to flesh it out (see [Roadmap](#roadmap)).
 
