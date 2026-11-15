@@ -20,7 +20,7 @@ import random
 from dataclasses import dataclass, field
 
 from pet_state import Mood
-from pixel_art import CANVAS_W, Pose
+from pixel_art import BODY_RX, BODY_RY, CANVAS_W, CX, GROUND_Y, Pose, head_geometry
 
 LOVE_DURATION = 2.6
 HOP_DURATION = 0.42
@@ -60,6 +60,16 @@ class RavenAnimator:
     _hearts: list[Particle] = field(default_factory=list)
     _zs: list[Particle] = field(default_factory=list)
     _walk_dir: int = -1
+    # feeding
+    _seeds: list[Particle] = field(default_factory=list)  # facing-left coords; vy > 0 while falling
+    _peck_t: float = 0.0
+    # pain
+    _tears: list[Particle] = field(default_factory=list)
+    _feathers: list[Particle] = field(default_factory=list)
+    _tear_timer: float = 0.0
+    _feather_timer: float = 1.0
+    _flinch_at: float = 0.0
+    _shake: float = 0.0
 
     def __post_init__(self) -> None:
         self.x = self.area_width * 0.5
@@ -74,13 +84,29 @@ class RavenAnimator:
     def in_love(self) -> bool:
         return self.t < self._love_until
 
+    @property
+    def render_x(self) -> float:
+        """x including the pain flinch shake."""
+        return max(0.0, min(self.area_width, self.x + self._shake))
+
     # ------------------------------------------------------------------ update
-    def update(self, dt: float, mood: Mood) -> Pose:
+    def update(
+        self,
+        dt: float,
+        mood: Mood,
+        feeding: bool = False,
+        hurting: bool = False,
+        sunglasses: bool = False,
+        disco: bool = False,
+    ) -> Pose:
         self.t += dt
         pose = Pose(mirror=self.facing_right)
+        self._shake = 0.0
 
         if mood == Mood.DEAD:
             self._hearts.clear()
+            self._seeds.clear()
+            self._tears.clear()
             pose.eyes = "dead"
             pose.upside_down = True
             pose.wing = 100
@@ -90,8 +116,17 @@ class RavenAnimator:
             pose.zs = []
             return pose
 
+        if not feeding:
+            self._seeds.clear()
+
         if self.in_love:
             self._love(dt, pose)
+        elif hurting and mood in (Mood.HAPPY, Mood.SLEEPY):
+            self._cower(dt, pose)
+        elif feeding and mood in (Mood.HAPPY, Mood.SLEEPY, Mood.DIZZY):
+            self._eat(dt, pose)
+        elif disco and mood == Mood.HAPPY:
+            self._dance(dt, pose)
         elif mood == Mood.HAPPY:
             self._happy(dt, pose)
         elif mood == Mood.SLEEPY:
@@ -103,6 +138,11 @@ class RavenAnimator:
 
         if mood in (Mood.DIZZY, Mood.GROGGY):
             pose.stars = self.t * (3.2 if mood == Mood.DIZZY else 2.2)
+        if hurting and not self.in_love:
+            self._pain(dt, pose)
+        pose.sunglasses = sunglasses
+        if disco and mood == Mood.HAPPY:
+            pose.disco = self.t
 
         # particles
         if self.in_love:
@@ -128,11 +168,16 @@ class RavenAnimator:
         self._update_particles(dt)
         pose.hearts = [(p.x, p.y, p.small) for p in self._hearts if p.life > 0.25 or int(p.life * 20) % 2]
         pose.zs = [(p.x, p.y, p.small) for p in self._zs]
+        pose.seeds = [(p.x, p.y) for p in self._seeds]
+        pose.tears = [(p.x, p.y, p.small) for p in self._tears]
+        pose.feathers = [(p.x, p.y, int(p.life * 3)) for p in self._feathers]
         pose.mirror = self.facing_right
         return pose
 
     def _update_particles(self, dt: float) -> None:
-        for plist in (self._hearts, self._zs):
+        for p in self._feathers:  # loose feathers drift down, swaying
+            p.vx = 6 * math.sin(self.t * 3 + p.life * 5)
+        for plist in (self._hearts, self._zs, self._tears, self._feathers):
             for p in plist:
                 p.x += p.vx * dt
                 p.y += p.vy * dt
@@ -257,3 +302,91 @@ class RavenAnimator:
         pose.wing = 33
         pose.wing_len = 21
         pose.far_wing = 28
+
+    # ------------------------------------------------------------------ feeding: seeds + pecking
+    def _eat(self, dt: float, pose: Pose) -> None:
+        """Seeds rain down in front of the beak and the raven pecks them up one by one."""
+        self._target_x = None
+        if self._hop_step(dt, pose):
+            return
+        ground = GROUND_Y - 1
+        if not self._seeds:
+            for _ in range(self.rng.randint(5, 7)):
+                self._seeds.append(
+                    Particle(self.rng.uniform(4, 16), self.rng.uniform(-14, 6), 0, self.rng.uniform(28, 40), 0, False)
+                )
+        for sd in self._seeds:
+            if sd.vy > 0:
+                sd.y += sd.vy * dt
+                if sd.y >= ground:
+                    sd.y, sd.vy = ground, 0
+        landed = [sd for sd in self._seeds if sd.vy == 0]
+        self._peck_t += dt
+        cycle = self._peck_t % 0.7
+        pose.peck = landed != [] and cycle < 0.25
+        pose.eyes = "happy" if pose.peck else "open"
+        pose.wing = 30 + (10 if pose.peck else 0)
+        if pose.peck and cycle + dt >= 0.25 and landed:
+            # gulp the seed closest to the beak
+            nearest = max(landed, key=lambda sd: sd.x)
+            self._seeds.remove(nearest)
+        if not pose.peck and landed:
+            # shuffle toward the seeds a little between pecks
+            pose.feet = "walk_a" if int(self.t * 4) % 2 else "stand"
+
+    # ------------------------------------------------------------------ pain (doomscrolling)
+    def _cower(self, dt: float, pose: Pose) -> None:
+        """Healthy raven being hurt: no hopping, hunched up with wings clutched."""
+        self._target_x = None
+        if self._hop_step(dt, pose):
+            return
+        pose.squash = 1
+        pose.wing = 8
+        pose.wing_len = 14
+
+    def _pain(self, dt: float, pose: Pose) -> None:
+        """Overlay for any (alive) mood while a penalty app is open: >_< eyes, squawks,
+        flinches with a red flash and a shake, tears, and feathers falling out."""
+        pose.eyes = "pain"
+        pose.beak_open = int(self.t * 3) % 3 == 0
+        if self.t >= self._flinch_at:
+            self._flinch_at = self.t + self.rng.uniform(0.9, 1.6)
+        since = self.t - (self._flinch_at - 1.6)
+        flinching = (self._flinch_at - self.t) > 1.3 or since < 0
+        # flinch: first ~0.3 s of each cycle
+        if flinching:
+            pose.flash = int(self.t * 16) % 2 == 0
+            self._shake = self.scale * (1 if int(self.t * 30) % 2 else -1)
+            pose.squash = 1
+        hop = pose.hop
+        cy = GROUND_Y - 3 - hop - BODY_RY
+        hx, hy, _ = head_geometry(CX, cy, BODY_RX, BODY_RY)
+        self._tear_timer -= dt
+        if self._tear_timer <= 0:
+            self._tear_timer = 0.45
+            self._tears.append(Particle(hx - 1 + self.rng.uniform(-1, 1), hy + 1, self.rng.uniform(-4, 4), 22, 1.1, self.rng.random() < 0.3))
+        self._feather_timer -= dt
+        if self._feather_timer <= 0:
+            self._feather_timer = self.rng.uniform(1.2, 2.2)
+            fx = self.rng.uniform(CX - 4, CX + 14)
+            if self.facing_right:
+                fx = CANVAS_W - fx
+            self._feathers.append(Particle(fx, cy - 2, 0, 7, (GROUND_Y - cy) / 7.0, False))
+
+    # ------------------------------------------------------------------ disco (all stats maxed)
+    def _dance(self, dt: float, pose: Pose) -> None:
+        """Party! Bounce on the beat, flap, and spin around every couple of beats."""
+        self._target_x = None
+        beat = 0.5
+        b = int(self.t / beat)
+        u = (self.t % beat) / beat
+        pose.eyes = "happy"
+        pose.beak_open = b % 2 == 0 and u < 0.5
+        pose.hop = int(round(math.sin(u * math.pi) * 4))
+        pose.squash = 1 if u > 0.85 else (-1 if u < 0.3 else 0)
+        pose.wing = 100 + 60 * math.sin(self.t * math.pi * 2 / beat)
+        pose.wing_len = 16
+        pose.far_wing = pose.wing
+        pose.lean = (1 if b % 2 else -1) if u > 0.5 else 0
+        self.facing_right = (b // 2) % 2 == 1
+        pose.feet = "walk_a" if b % 2 else "walk_b"

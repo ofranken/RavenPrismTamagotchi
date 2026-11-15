@@ -134,7 +134,9 @@ class PhoneReport:
     label: str = ""
     screen_on: bool = True
     steps_total: Optional[int] = None  # cumulative step counter since phone boot
-    received_at: float = 0.0  # monotonic-ish wall time (time.time())
+    received_at: float = 0.0  # wall time (time.time())
+    brightness: Optional[float] = None  # phone screen brightness 0..1 (1.0 = full = probably outdoors)
+    lux: Optional[float] = None  # phone ambient light sensor
 
 
 @dataclass

@@ -7,7 +7,7 @@ app or screen state changes:
 
     POST /activity
     {"package": "com.instagram.android", "label": "Instagram",
-     "screen_on": true, "steps_total": 12345}
+     "screen_on": true, "steps_total": 12345, "brightness": 0.4}
 
 The response is the raven's current stats so the phone can show them.
 GET /status returns the same stats.
@@ -111,6 +111,12 @@ class PhoneLink:
                         steps_total=int(steps) if isinstance(steps, (int, float)) else None,
                         received_at=time.time(),
                     )
+                    lux = data.get("lux")
+                    if isinstance(lux, (int, float)) and lux >= 0:
+                        report.lux = float(lux)
+                    bright = data.get("brightness")
+                    if isinstance(bright, (int, float)):
+                        report.brightness = max(0.0, min(1.0, float(bright)))
                 except (ValueError, TypeError):
                     self._send(400, {"error": "bad json"})
                     return

@@ -17,6 +17,8 @@ object LinkState {
     @Volatile var foregroundPackage = ""
     @Volatile var foregroundLabel = ""
     @Volatile var stepsTotal: Long? = null
+    @Volatile var brightness: Double? = null
+    @Volatile var lux: Double? = null
     @Volatile var discoveredHost = ""
     @Volatile var lastStatus: JSONObject? = null
     @Volatile var lastOkAt = 0L

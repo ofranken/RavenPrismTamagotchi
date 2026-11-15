@@ -21,6 +21,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import org.json.JSONObject
 import java.net.DatagramPacket
@@ -105,8 +106,12 @@ class RavenLinkService : Service(), SensorEventListener {
             addAction(Intent.ACTION_USER_PRESENT)
         })
 
+        sensors = getSystemService(SensorManager::class.java)
+        // ambient light: same sensor auto-brightness uses; > ~10k lux means direct sunlight
+        sensors?.getDefaultSensor(Sensor.TYPE_LIGHT)?.let {
+            sensors?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
+        }
         if (Permissions.hasActivityRecognition(this)) {
-            sensors = getSystemService(SensorManager::class.java)
             val stepCounter = sensors?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
             if (stepCounter != null) {
                 sensors?.registerListener(this, stepCounter, SensorManager.SENSOR_DELAY_NORMAL, 10_000_000)
@@ -136,8 +141,9 @@ class RavenLinkService : Service(), SensorEventListener {
 
     // ------------------------------------------------------------------ steps
     override fun onSensorChanged(event: SensorEvent) {
-        if (event.sensor.type == Sensor.TYPE_STEP_COUNTER) {
-            LinkState.stepsTotal = event.values[0].toLong()
+        when (event.sensor.type) {
+            Sensor.TYPE_STEP_COUNTER -> LinkState.stepsTotal = event.values[0].toLong()
+            Sensor.TYPE_LIGHT -> LinkState.lux = event.values[0].toDouble()
         }
     }
 
@@ -167,6 +173,14 @@ class RavenLinkService : Service(), SensorEventListener {
         val now = System.currentTimeMillis()
         val stats = usage.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, now - 3_600_000L, now)
         return stats?.maxByOrNull { it.lastTimeUsed }?.packageName ?: ""
+    }
+
+    /** Screen brightness 0..1. With auto-brightness, full brightness almost always means sunlight. */
+    private fun screenBrightness(): Double? = try {
+        val v = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+        (v / 255.0).coerceIn(0.0, 1.0).also { LinkState.brightness = it }
+    } catch (e: Settings.SettingNotFoundException) {
+        null
     }
 
     private fun labelFor(pkg: String): String = try {
@@ -208,6 +222,8 @@ class RavenLinkService : Service(), SensorEventListener {
             put("label", label)
             put("screen_on", screenOn)
             LinkState.stepsTotal?.let { put("steps_total", it) }
+            screenBrightness()?.let { put("brightness", it) }
+            LinkState.lux?.let { put("lux", it) }
         }.toString()
         try {
             val conn = URL("http://$host:${Prefs.port(this)}/activity").openConnection() as HttpURLConnection
@@ -224,8 +240,8 @@ class RavenLinkService : Service(), SensorEventListener {
                 ?.bufferedReader()?.use { it.readText() } ?: ""
             conn.disconnect()
             if (code !in 200..299) throw IllegalStateException("HTTP $code $text")
-            Log.i(TAG, "sent ${pkg.ifEmpty { "-" }} screen_on=$screenOn -> glasses sees ${JSONObject(text.ifBlank { "{}" }).optString("activity")}")
             val status = JSONObject(text.ifBlank { "{}" })
+            Log.i(TAG, "sent ${pkg.ifEmpty { "-" }} screen_on=$screenOn brightness=${LinkState.brightness} lux=${LinkState.lux} -> glasses sees ${status.optString("activity")} sunglasses=${status.optBoolean("sunglasses")}")
             LinkState.lastStatus = status
             LinkState.lastOkAt = System.currentTimeMillis()
             LinkState.lastError = ""

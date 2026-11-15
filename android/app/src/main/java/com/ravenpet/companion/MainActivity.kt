@@ -174,6 +174,9 @@ class MainActivity : Activity() {
         sb.append("Steps:     ").append(LinkState.stepsTotal?.toString() ?: "-")
         s?.let { sb.append("  (today ").append(it.optInt("steps_today")).append(")") }
         sb.append('\n')
+        sb.append("Brightness: ").append(LinkState.brightness?.let { "${(it * 100).toInt()}%" } ?: "-")
+        sb.append("  Light: ").append(LinkState.lux?.let { "${it.toInt()} lux" } ?: "-").append('\n')
+        if (s?.optBoolean("sunglasses") == true) sb.append("Sunny! Raven has its shades on 😎\n")
         if (s != null) {
             fun v(k: String) = s.optDouble(k, 0.0).toInt()
             sb.append("\nHealth ${v("health")}   Food ${v("food")}\nEnergy ${v("energy")}   Play ${v("play")}\n")

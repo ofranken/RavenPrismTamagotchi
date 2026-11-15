@@ -23,6 +23,12 @@ POSES = {
     "groggy": Pose(eyes="groggy", stars=2.0, lean=-1, wing=35, wing_len=21, far_wing=30, feet="walk_a"),
     "groggy R": Pose(eyes="groggy", stars=3.0, wing=35, wing_len=21, far_wing=30, feet="walk_b", mirror=True),
     "dead": Pose(eyes="dead", upside_down=True, wing=100, far_wing=100),
+    "eat": Pose(seeds=[(5, 59), (10, 59), (15, 59), (8, 50)], peck=True, eyes="happy", feet="walk_a"),
+    "eat up": Pose(seeds=[(5, 59), (10, 59), (15, 59)]),
+    "pain": Pose(eyes="pain", beak_open=True, squash=1, wing=8, wing_len=14, tears=[(19, 30, False), (17, 38, True)], feathers=[(44, 34, 0), (52, 46, 1)]),
+    "pain flash": Pose(eyes="pain", flash=True, squash=1, wing=8, wing_len=14, tears=[(19, 32, False)]),
+    "disco": Pose(disco=1.3, eyes="happy", hop=3, wing=150, wing_len=16, far_wing=150, sunglasses=True),
+    "sunglasses": Pose(sunglasses=True, wing=60, far_wing=50, hop=2),
 }
 
 

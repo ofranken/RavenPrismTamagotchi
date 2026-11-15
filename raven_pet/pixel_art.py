@@ -22,27 +22,27 @@ CANVAS_H = 64
 GROUND_Y = 60  # row the feet stand on
 
 PALETTE: dict[str, tuple[int, int, int]] = {
-    # body (glossy raven indigo, light from top-left)
-    "O": (96, 100, 156),  # outline / rim
-    "D": (22, 22, 36),  # deep shadow
-    "B": (34, 35, 56),  # base
-    "M": (50, 52, 84),  # mid
-    "H": (80, 84, 134),  # highlight
-    "S": (150, 156, 214),  # specular sheen
+    # body: raven charcoal, with the purple-blue iridescence only in the highlights
+    "O": (112, 110, 128),  # outline / rim (grey with a hint of violet)
+    "D": (20, 20, 24),  # deep shadow
+    "B": (34, 34, 40),  # base
+    "M": (52, 51, 62),  # mid
+    "H": (78, 72, 100),  # highlight (violet sheen)
+    "S": (128, 116, 170),  # specular sheen
     # wing
-    "w": (28, 28, 46),
-    "v": (66, 70, 112),  # feather edges
-    # beak & feet (grey felt)
-    "g": (150, 154, 164),
-    "G": (196, 200, 210),
-    "q": (104, 108, 118),
+    "w": (22, 22, 27),
+    "v": (62, 60, 76),  # feather edges
+    # beak & feet (grey, like the plush)
+    "g": (128, 128, 134),
+    "G": (172, 172, 178),
+    "q": (86, 86, 92),
     # cheek patch
     "r": (214, 64, 48),
     "R": (246, 112, 88),
     # eyes
     "K": (8, 8, 14),
     "W": (255, 255, 255),
-    "L": (200, 205, 255),  # eyelid
+    "L": (150, 148, 168),  # eyelid
     "X": (235, 235, 245),  # dead / dizzy eyes
     # particles
     "Y": (255, 214, 64),
@@ -50,7 +50,31 @@ PALETTE: dict[str, tuple[int, int, int]] = {
     "P": (255, 72, 110),
     "p": (255, 176, 196),
     "Z": (170, 210, 255),
+    # seeds
+    "s": (206, 186, 136),
+    "t": (138, 116, 82),
+    # tears
+    "T": (120, 190, 255),
+    # sunglasses
+    "F": (186, 186, 198),
+    # disco
+    "1": (255, 255, 255),
+    "2": (90, 240, 255),
+    "3": (255, 90, 230),
+    "4": (255, 230, 90),
+    "5": (130, 130, 150),
+    "6": (80, 80, 96),
+    "j": (88, 80, 130),
+    "k": (60, 54, 96),
+    # damage flash (body tinted red)
+    "d": (70, 16, 20),
+    "b": (110, 24, 30),
+    "m": (150, 36, 40),
+    "h": (200, 60, 60),
+    "o": (255, 110, 110),
 }
+
+FLASH = {"D": "d", "B": "b", "M": "m", "H": "h", "S": "h", "O": "o", "w": "d", "v": "m"}
 
 BAYER4 = (
     (0, 8, 2, 10),
@@ -90,7 +114,24 @@ EYES = {
     "groggy": ["LLLLL", "LLLLL", "KKKKK", "KWKKK", ".KKK."],  # half-lidded
     "dizzy": ["XXXXX", "....X", "XXX.X", "X...X", "XXXXX"],  # spiral
     "dead": ["X...X", ".X.X.", "..X..", ".X.X.", "X...X"],
+    "pain": ["KK...", "..KK.", "....K", "..KK.", "KK..."],  # squeezed shut  >_<
 }
+
+SEED = ["ss.", "stt"]  # sunflower-ish seed
+TEAR = ["T", "T"]
+TEAR_BIG = [".T.", "TTT", ".T."]
+# sunglasses (facing left): lenses are dark violet glass with a white glint, frames light so
+# they show up on the additive display
+SUNGLASSES = [
+    "FFFFFFFFFF",
+    "FjWjjjjFFF",
+    "FWjjjjjF..",
+    "FkkkkkkF..",
+    ".FkkkkF...",
+    "..FFFF....",
+]
+PAIN_BROW = ["LL....", "..LL..", "....L."]  # worried brow, inner end raised
+FEATHER = [["..v", ".O.", "v.."], ["v..", ".O.", "..v"]]
 
 STAR_BIG = ["..Y..", ".YYY.", "YYyYY", ".YYY.", "..Y.."]
 STAR_SMALL = [".Y.", "YyY", ".Y."]
@@ -121,6 +162,13 @@ class Pose:
     stars: Optional[float] = None  # orbit phase in radians, None = no stars
     hearts: list[tuple[float, float, bool]] = field(default_factory=list)  # (x, y, small)
     zs: list[tuple[float, float, bool]] = field(default_factory=list)
+    peck: bool = False  # head dipped down to eat
+    flash: bool = False  # red damage flash
+    seeds: list[tuple[float, float]] = field(default_factory=list)  # facing-left coords
+    tears: list[tuple[float, float, bool]] = field(default_factory=list)  # facing-left coords
+    feathers: list[tuple[float, float, int]] = field(default_factory=list)  # canvas coords
+    sunglasses: bool = False
+    disco: Optional[float] = None  # time (s) driving the disco ball spin, None = no party
 
 
 # body geometry (facing left)
@@ -129,32 +177,58 @@ BODY_RX = 17
 BODY_RY = 16
 
 
-@lru_cache(maxsize=16)
-def _body_layer(rx: int, ry: int, light_from_below: bool = False) -> tuple[tuple[Optional[str], ...], ...]:
-    """Shaded, outlined body ball; rows/cols relative to a (2*rx+3) x (2*ry+3) box."""
-    w, h = 2 * rx + 3, 2 * ry + 3
-    cx, cy = rx + 1, ry + 1
-    inside = [[False] * w for _ in range(h)]
-    for y in range(h):
-        for x in range(w):
-            dx = (x - cx + 0.5) / (rx + 0.3)
-            dy = (y - cy + 0.5) / (ry + 0.3)
-            # pear shape: a touch narrower at the top, like the plush
-            if dy < 0:
-                dx *= 1.0 + 0.10 * (-dy)
-            inside[y][x] = dx * dx + dy * dy <= 1.0
+@lru_cache(maxsize=64)
+def _body_layer(cx: int, cy: int, rx: int, ry: int, light_from_below: bool = False) -> tuple[tuple[Optional[str], ...], ...]:
+    """Shaded, outlined raven body on a full canvas: round head + plump belly + wedge tail.
+
+    Built as a union of shapes (not one ball) so there is a neck notch, a forehead and a tail.
+    Each pixel is shaded with the normal of whichever shape it belongs to most.
+    """
+    hx, hy, hr = head_geometry(cx, cy, rx, ry)
+    bx, by, brx, bry = cx + 1, cy + 3, rx, ry * 0.82
+    # tail: wedge sticking out of the lower back, tilted slightly up
+    tx0, ty0 = cx + rx * 0.72, cy + ry * 0.32
+    tx1, ty1 = cx + rx + 7, cy + ry * 0.05
+    tlen = math.hypot(tx1 - tx0, ty1 - ty0)
+    tax, tay = (tx1 - tx0) / tlen, (ty1 - ty0) / tlen
+
     lx, ly, lz = -0.5, (0.62 if light_from_below else -0.62), 0.6
     n = math.sqrt(lx * lx + ly * ly + lz * lz)
     lx, ly, lz = lx / n, ly / n, lz / n
-    rows: list[list[Optional[str]]] = [[None] * w for _ in range(h)]
-    for y in range(h):
-        for x in range(w):
-            if inside[y][x]:
-                nx = (x - cx + 0.5) / rx
-                ny = (y - cy + 0.5) / ry
+
+    kind = [[None] * CANVAS_W for _ in range(CANVAS_H)]
+    norm: dict[tuple[int, int], tuple[float, float]] = {}
+    for y in range(CANVAS_H):
+        for x in range(CANVAS_W):
+            px, py = x + 0.5, y + 0.5
+            dh = ((px - hx) / hr) ** 2 + ((py - hy) / hr) ** 2
+            db = ((px - bx) / brx) ** 2 + ((py - by) / bry) ** 2
+            # tail
+            t = (px - tx0) * tax + (py - ty0) * tay
+            sdist = -(px - tx0) * tay + (py - ty0) * tax
+            in_tail = 0 <= t <= tlen and abs(sdist) <= 3.6 * (1 - t / tlen) + 0.8
+            if dh <= 1.0 or db <= 1.0:
+                # blend head and belly normals near the neck so the head isn't a separate "helmet"
+                wh, wb = math.exp(-5 * dh), math.exp(-5 * db)
+                nhx, nhy = (px - hx) / hr, (py - hy) / hr
+                nbx, nby = (px - bx) / brx, (py - by) / bry
+                kind[y][x] = "body"
+                norm[(x, y)] = ((wh * nhx + wb * nbx) / (wh + wb), (wh * nhy + wb * nby) / (wh + wb))
+            elif in_tail:
+                kind[y][x] = "tail"
+                norm[(x, y)] = (0.6, sdist / 4.0)
+
+    rows: list[list[Optional[str]]] = [[None] * CANVAS_W for _ in range(CANVAS_H)]
+    for y in range(CANVAS_H):
+        for x in range(CANVAS_W):
+            k = kind[y][x]
+            if k is not None:
+                nx, ny = norm[(x, y)]
                 nz = math.sqrt(max(0.0, 1.0 - nx * nx - ny * ny))
-                lam = nx * lx + ny * ly + nz * lz  # -1..1
+                lam = nx * lx + ny * ly + nz * lz
                 t = (lam + 0.35) / 1.3 + (BAYER4[y % 4][x % 4] / 16.0 - 0.5) * 0.22
+                if k == "tail":
+                    t -= 0.15
                 if t > 0.96:
                     c = "S"
                 elif t > 0.80:
@@ -165,18 +239,27 @@ def _body_layer(rx: int, ry: int, light_from_below: bool = False) -> tuple[tuple
                     c = "B"
                 else:
                     c = "D"
+                # tail feather lines
+                if k == "tail" and (x + y) % 3 == 0:
+                    c = "v"
                 rows[y][x] = c
             else:
                 for ddx, ddy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                     xx, yy = x + ddx, y + ddy
-                    if 0 <= xx < w and 0 <= yy < h and inside[yy][xx]:
+                    if 0 <= xx < CANVAS_W and 0 <= yy < CANVAS_H and kind[yy][xx] is not None:
                         rows[y][x] = "O"
                         break
-    # a few plush "fur" flecks
-    for (fx, fy) in ((cx - 6, cy + 4), (cx + 3, cy + 8), (cx - 2, cy + 10), (cx + 8, cy + 2), (cx - 9, cy + 9)):
-        if 0 <= fy < h and 0 <= fx < w and rows[fy][fx] in ("B", "D"):
+    # chest feather flecks (ravens have shaggy throat feathers)
+    for (fx, fy) in ((hx + 1, hy + hr + 1), (hx + 3, hy + hr + 3), (hx - 1, hy + hr + 4), (bx - 4, by + 3), (bx + 2, by + 6)):
+        fx, fy = int(fx), int(fy)
+        if 0 <= fy < CANVAS_H and 0 <= fx < CANVAS_W and rows[fy][fx] in ("B", "D"):
             rows[fy][fx] = "M"
     return tuple(tuple(r) for r in rows)
+
+
+def head_geometry(cx: float, cy: float, rx: float, ry: float) -> tuple[float, float, float]:
+    """Head circle (centre x, centre y, radius) for a body centred at (cx, cy)."""
+    return cx - rx * 0.42, cy - ry * 0.5, ry * 0.6
 
 
 def _draw_wing(grid: Grid, pivot: tuple[float, float], angle_deg: float, length: float, width: float, far: bool = False) -> None:
@@ -223,12 +306,11 @@ def raven_layer(pose: Pose) -> Grid:
     feet_h = 3
     bottom = GROUND_Y - feet_h - pose.hop  # last body row
     cy = bottom - ry
-    top = cy - ry - 1
-    left = CX - rx - 1
+    hx, hy, hr = head_geometry(CX, cy, rx, ry)
 
     # far wing (behind the body), peeks out on the left/front side
     if pose.far_wing is not None:
-        _draw_wing(g, (CX - rx * 0.25, cy - ry * 0.15), -pose.far_wing, pose.wing_len * 0.85, 4.0, far=True)
+        _draw_wing(g, (CX - rx * 0.1, cy + 1), -pose.far_wing, pose.wing_len * 0.85, 4.0, far=True)
 
     # feet first so the body hides the top of the legs
     foot_y = GROUND_Y - 4 - pose.hop
@@ -242,20 +324,18 @@ def raven_layer(pose: Pose) -> Grid:
         stamp(g, fb, CX + 1, foot_y)
 
     # when dead the layer is flipped afterwards, so light it from below to keep it lit from above
-    body = _body_layer(rx, ry, pose.upside_down)
-    for j, row in enumerate(body):
-        for i, c in enumerate(row):
+    body = _body_layer(CX, cy, rx, ry, pose.upside_down)
+    for y, row in enumerate(body):
+        for x, c in enumerate(row):
             if c is None:
                 continue
-            x, y = left + i, top + j
-            if 0 <= x < CANVAS_W and 0 <= y < CANVAS_H:
-                if c == "O" and g[y][x] is not None:
-                    continue  # keep far wing visible through the rim
-                g[y][x] = c
+            if c == "O" and g[y][x] is not None:
+                continue  # keep far wing / feet visible through the rim
+            g[y][x] = c
 
     # beak: wedge pointing left from the face
-    by = cy - int(ry * 0.32)
-    bx = CX - rx + 1  # where the beak meets the face
+    by = int(hy) + 2
+    bx = int(hx - hr) + 2  # where the beak meets the face
     beak = [
         "......OOOO",
         "....OOGGGG",
@@ -276,13 +356,34 @@ def raven_layer(pose: Pose) -> Grid:
     stamp(g, beak, bx - 8, by - 3)
 
     # eye + cheek
-    ex = CX - int(rx * 0.42)
-    ey = cy - int(ry * 0.52)
+    ex = int(hx) - 1
+    ey = int(hy) - 3
     stamp(g, EYES.get(pose.eyes, EYES["open"]), ex - 2, ey - 1)
-    stamp(g, ["...rR", "..rrR", ".rrrR", "rrr.."], ex + 3, ey + 5)
+    stamp(g, ["..rR", ".rrR", "rr.."], ex + 4, ey + 4)
+    if pose.sunglasses:
+        # shades over the eye, strap running back around the head
+        stamp(g, SUNGLASSES, ex - 3, ey - 1)
+    elif pose.eyes == "pain":
+        stamp(g, PAIN_BROW, ex - 3, ey - 4)
 
     # near wing (on top)
-    _draw_wing(g, (CX + rx * 0.42, cy - ry * 0.22), pose.wing, pose.wing_len, 5.5)
+    _draw_wing(g, (CX + rx * 0.36, cy - 1), pose.wing, pose.wing_len, 5.5)
+
+    # peck: swing the head forward and down toward the ground
+    if pose.peck:
+        neck = int(hy + hr * 0.7)
+        dy, dx = 6, -3
+        moved = {}
+        for y in range(0, neck + 1):
+            for x in range(0, CX + 2):
+                c = g[y][x]
+                if c is not None and (y < hy or x < CX - 4):
+                    moved[(x, y)] = c
+                    g[y][x] = None
+        for (x, y), c in moved.items():
+            nx_, ny_ = x + dx, y + dy
+            if 0 <= nx_ < CANVAS_W and 0 <= ny_ < CANVAS_H:
+                g[ny_][nx_] = c
 
     # lean: shear upper body rows
     if pose.lean:
@@ -307,18 +408,19 @@ def raven_layer(pose: Pose) -> Grid:
             ny = y + shift
             if 0 <= ny < CANVAS_H:
                 g[ny] = list(r)
+    if pose.flash:
+        g = [[FLASH.get(c, c) if c is not None else None for c in row] for row in g]
     if pose.mirror:
         g = [row[::-1] for row in g]
     return g
 
 
 def head_center(pose: Pose) -> tuple[float, float]:
-    ry = BODY_RY
-    cy = GROUND_Y - 3 - pose.hop - ry
-    x = CX - 4
+    cy = GROUND_Y - 3 - pose.hop - BODY_RY
+    x, y, r = head_geometry(CX, cy, BODY_RX, BODY_RY)
     if pose.mirror:
         x = CANVAS_W - 1 - x
-    return x, cy - ry * 0.75
+    return x, y - r * 0.3
 
 
 def compose(pose: Pose) -> Grid:
@@ -343,13 +445,67 @@ def compose(pose: Pose) -> Grid:
                         g[py][px] = ch
         for x, y, art in front:
             stamp(g, art, x, y)
+    if pose.disco is not None:
+        _draw_disco(g, pose.disco)
     for (x, y, small) in pose.hearts:
         art = HEART_SMALL if small else HEART
         stamp(g, art, int(round(x)) - len(art[0]) // 2, int(round(y)))
+    def fx(x: float, w: int) -> int:
+        """facing-left x -> canvas x"""
+        return int(round(CANVAS_W - x - w)) if pose.mirror else int(round(x))
+
+    for (x, y) in pose.seeds:
+        stamp(g, SEED, fx(x, 3), int(round(y)) - 1, mirror=pose.mirror)
+    for (x, y, big) in pose.tears:
+        art = TEAR_BIG if big else TEAR
+        stamp(g, art, fx(x, len(art[0])), int(round(y)))
+    for (x, y, frame) in pose.feathers:
+        stamp(g, FEATHER[frame % 2], int(round(x)), int(round(y)))
     for (x, y, small) in pose.zs:
         art = ZZZ_SMALL if small else ZZZ
         stamp(g, art, int(round(x)), int(round(y)))
     return g
+
+
+DISCO_LIGHTS = "1234"
+
+
+def _draw_disco(g: Grid, t: float) -> None:
+    """Mirror ball hanging at the top with spinning facets, plus light spots sweeping the room."""
+    cx, cy, r = 32, 8, 6
+    for y in range(0, cy - r):
+        g[y][cx] = "F"  # string
+    spin = int(t * 8)
+    for y in range(cy - r, cy + r + 1):
+        for x in range(cx - r, cx + r + 1):
+            dx, dy = x - cx + 0.5, y - cy + 0.5
+            if dx * dx + dy * dy > r * r:
+                continue
+            facet = ((x + spin) // 2 + y // 2) % 5
+            lit = (x - cx) < 0 and (y - cy) < 0  # top-left highlight
+            if facet == 0:
+                c = DISCO_LIGHTS[(x // 2 + y + spin) % 4]
+            elif facet in (1, 2):
+                c = "1" if lit else "5"
+            else:
+                c = "5" if lit else "6"
+            g[y][x] = c
+    # light spots: little sparkles orbiting the ball and sweeping across the floor and walls
+    for k in range(8):
+        a = t * 1.7 + k * math.pi / 4
+        sx = int(round(cx + math.cos(a) * (14 + (k % 3) * 6)))
+        sy = int(round(cy + 16 + math.sin(a) * (10 + (k % 2) * 8)))
+        col = DISCO_LIGHTS[(k + int(t * 4)) % 4]
+        if int(t * 6 + k) % 3 == 0:
+            art = [f".{col}.", f"{col}{col}{col}", f".{col}."]
+        else:
+            art = [col]
+        for j, row in enumerate(art):
+            for i, ch in enumerate(row):
+                px, py = sx + i - len(row) // 2, sy + j - len(art) // 2
+                # only light up empty space so the raven stays readable
+                if ch != "." and 0 <= px < CANVAS_W and 0 <= py < CANVAS_H and g[py][px] is None:
+                    g[py][px] = ch
 
 
 def frame_to_rgba(grid: Grid) -> bytes:

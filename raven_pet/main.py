@@ -14,6 +14,7 @@ Deploy to the glasses:  python main.py deploy
 
 Simulator keys: 1 doomscroll  2 email  3 zoom  4 other app  5 screen off  6 asleep
                 0 clear phone  W +250 steps  L love  F toggle 60x speed  D -25 health  R reset
+                T toggle sunglasses  M max all stats (disco)
 """
 
 from __future__ import annotations
@@ -59,6 +60,21 @@ SAVE_EVERY_S = 30.0
 GAZE_DWELL_S = 0.6  # how long you have to look at the raven before it reacts
 LOVE_COOLDOWN_S = 6.0
 TOAST_S = 4.0
+SUNNY_BRIGHTNESS = 0.95  # phone screen at (near) full brightness => probably outside in the sun
+DISCO_AT = 95  # every stat at least this high => disco party
+SUNNY_LUX = 10_000  # phone light sensor: direct sunlight is 10k-100k lux, a bright room ~500
+SUNGLASSES_HOLD_S = 10 * 60  # keep the shades on a while: the phone goes back in a pocket
+
+
+def lenses_tinted() -> bool:
+    """True when the glasses' lenses are tinted.
+
+    The simulator models tint (its "Tint" button flips raven_simulator.ENABLE_TINT), so we
+    read that. The Raven SDK has no device API for lens tint yet; on the glasses this
+    returns False and the sunglasses rely on the phone's screen brightness instead.
+    """
+    sim = sys.modules.get("raven_framework.core.raven_simulator")
+    return bool(getattr(sim, "ENABLE_TINT", False)) if sim is not None else False
 
 
 def grid_to_qimage(grid: Grid) -> QImage:
@@ -162,6 +178,8 @@ class RavenPetApp(RavenApp):
         self._toast = ""
         self._toast_until = 0.0
         self._status_text = ""
+        self._sunny_until = 0.0
+        self._force_sunglasses = False
         self._frame = 0
 
         app_w, app_h = self.app.width(), self.app.height()
@@ -218,6 +236,17 @@ class RavenPetApp(RavenApp):
     def _handle_report(self, report: PhoneReport, now: float) -> None:
         self.report = report
         self.state.update_screen(report.screen_on, now)
+        bright_screen = report.brightness is not None and report.brightness >= SUNNY_BRIGHTNESS
+        sunlight = report.lux is not None and report.lux >= SUNNY_LUX
+        if report.screen_on:
+            if bright_screen or sunlight:
+                if now >= self._sunny_until:
+                    self._show_toast("Sunny out! Raven put on its shades", now)
+                self._sunny_until = now + SUNGLASSES_HOLD_S
+            else:
+                # phone is on and it isn't sunny any more: shades off right away.
+                # (while the screen is off - phone in a pocket - the shades stay on until the hold runs out)
+                self._sunny_until = 0.0
         steps = self.state.apply_steps(report.steps_total, now)
         if steps >= 20:
             self._show_toast(f"+{steps} steps - Raven played!", now)
@@ -228,10 +257,22 @@ class RavenPetApp(RavenApp):
             mood = Mood.SLEEPY  # raven sleeps when you do
         return mood
 
+    def _wearing_sunglasses(self) -> bool:
+        return self._force_sunglasses or lenses_tinted() or time.time() < self._sunny_until
+
     def _render(self, dt: float) -> None:
-        pose = self.anim.update(dt, self._display_mood())
+        s = self.state
+        disco = s.alive and min(s.health, s.food, s.energy, s.play) >= DISCO_AT
+        pose = self.anim.update(
+            dt,
+            self._display_mood(),
+            disco=disco,
+            feeding=self.activity == Activity.FEED,
+            hurting=self.activity == Activity.DOOM,
+            sunglasses=self._wearing_sunglasses(),
+        )
         self.raven.set_grid(compose(pose))
-        self.raven.move(int(self.anim.x), self.raven_y)
+        self.raven.move(int(self.anim.render_x), self.raven_y)
         values = {
             "health": self.state.health,
             "food": self.state.food,
@@ -295,7 +336,7 @@ class RavenPetApp(RavenApp):
         else:
             label = (self.report.label or self.report.package) if self.report else ""
             text = {
-                Activity.DOOM: f"{label} is hurting Raven!",
+                Activity.DOOM: f"Ow! {label} is hurting Raven!",
                 Activity.FEED: f"{label} - feeding Raven",
                 Activity.PET: f"{label} - Raven feels loved",
                 Activity.NEUTRAL: "",
@@ -322,6 +363,7 @@ class RavenPetApp(RavenApp):
             "revive": round(s.revive_fraction, 2),
             "steps_today": s.steps_today,
             "activity": self.activity.value,
+            "sunglasses": self._wearing_sunglasses(),
         }
 
     # ------------------------------------------------------------------ persistence / exit
@@ -376,6 +418,11 @@ class RavenPetApp(RavenApp):
                 self.state._die()
         elif k == Qt.Key.Key_R:
             self.state = PetState()
+        elif k == Qt.Key.Key_M:  # max out every stat (disco!)
+            s = self.state
+            s.health = s.food = s.energy = s.play = 100.0
+        elif k == Qt.Key.Key_T:
+            self._force_sunglasses = not self._force_sunglasses
         else:
             super().keyPressEvent(event)
             return
@@ -383,5 +430,11 @@ class RavenPetApp(RavenApp):
 
 
 if __name__ == "__main__":
+    import faulthandler
+    import signal
+
+    # `kill -USR1 <pid>` prints every thread's stack: handy if the app ever freezes
+    if hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, all_threads=True)
     sys.path.insert(0, str(HERE))
     RunApp.run(lambda: RavenPetApp(), app_id=APP_ID, app_key=APP_KEY)
